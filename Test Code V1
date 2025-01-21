@@ -1,0 +1,138 @@
+!!pip install PyPDF2 requests beautifulsoup4
+# Import necessary modules
+import re
+import PyPDF2
+import requests
+from bs4 import BeautifulSoup
+from google.colab import files
+
+# Function to extract text from a PDF
+def extract_text_from_pdf(pdf_path):
+    """Extract text from a PDF file."""
+    text = ""
+    with open(pdf_path, "rb") as file:
+        pdf_reader = PyPDF2.PdfReader(file)
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+    return text
+
+# Preprocess the text
+def preprocess_text(text):
+    """Convert text to lowercase and remove special characters."""
+    text = text.lower()  # Convert to lowercase
+    text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
+    return text.split()  # Tokenize into words
+
+# Search for a word in the preprocessed text
+def search_word(word, text):
+    """Search for a single word in the text and return occurrences with context."""
+    matches = []
+    for i, w in enumerate(text):
+        if w == word.lower():
+            # Get context: previous and next 5 words
+            context = text[max(0, i-5):i+6]
+            matches.append(" ".join(context))
+    return matches
+
+# Search for a phrase in the raw text
+def search_phrase(phrase, raw_text):
+    """Search for a phrase in the raw text."""
+    phrase = phrase.lower()
+    matches = [m.start() for m in re.finditer(re.escape(phrase), raw_text.lower())]
+    return matches
+
+# Search Cornell Law Supreme Court Cases
+def search_cornell(query):
+    """Search Cornell Law Supreme Court cases for a given query."""
+    base_url = "https://www.law.cornell.edu/supremecourt/text"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
+    # Send GET request
+    response = requests.get(base_url, headers=headers)
+    if response.status_code != 200:
+        print(f"Error: Unable to fetch results (Status Code: {response.status_code})")
+        return []
+
+    # Parse the HTML content
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Search for the query in the case text
+    case_text = soup.get_text().lower()
+    occurrences = [m.start() for m in re.finditer(re.escape(query.lower()), case_text)]
+
+    # Collect context around matches
+    results = []
+    for pos in occurrences:
+        start = max(0, pos - 100)  # 100 characters before the match
+        end = min(len(case_text), pos + 100)  # 100 characters after the match
+        context = case_text[start:end]
+        results.append(context.strip())
+
+    return results
+
+# Main program
+def main():
+    print("Please upload your PDF files.")
+    uploaded_files = files.upload()  # Upload files in Colab
+    raw_texts = {}
+
+    # Extract text from each uploaded PDF
+    for file_name, file_data in uploaded_files.items():
+        print(f"Processing: {file_name}")
+        with open(file_name, "wb") as pdf_file:
+            pdf_file.write(file_data)  # Save the file temporarily for processing
+        raw_text = extract_text_from_pdf(file_name)
+        raw_texts[file_name] = raw_text
+        print(f"Extracted {len(raw_text)} characters from {file_name}.")
+
+    # Interactive search menu
+    while True:
+        print("\nSearch Options:")
+        print("1. Search for a word or phrase in PDFs")
+        print("2. Search Cornell Law Supreme Court cases")
+        print("3. Exit")
+        choice = input("Enter your choice (1, 2, or 3): ")
+
+        if choice == "1":
+            query = input("Enter the word or phrase to search in PDFs: ")
+            print(f"\n--- Searching PDFs for '{query}' ---")
+            for file_name, raw_text in raw_texts.items():
+                preprocessed_text = preprocess_text(raw_text)
+                if " " in query:  # If the query contains spaces, treat it as a phrase
+                    results = search_phrase(query, raw_text)
+                    print(f"\nResults for '{query}' in {file_name}:")
+                    if results:
+                        print(f"Found at character positions: {results}")
+                    else:
+                        print("No occurrences found.")
+                else:  # Treat as a single word
+                    results = search_word(query, preprocessed_text)
+                    print(f"\nResults for '{query}' in {file_name}:")
+                    if results:
+                        for result in results:
+                            print(f" - {result}")
+                    else:
+                        print("No occurrences found.")
+
+        elif choice == "2":
+            query = input("Enter the search term for Cornell Law Supreme Court cases: ")
+            results = search_cornell(query)
+            print(f"\nResults for '{query}' in Cornell Law:")
+            if results:
+                for idx, result in enumerate(results, start=1):
+                    print(f"{idx}. {result}\n")
+            else:
+                print("No results found on Cornell Law.")
+
+        elif choice == "3":
+            print("Exiting the program. Goodbye!")
+            break
+
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.")
+
+if __name__ == "__main__":
+    main()
+
